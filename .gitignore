@@ -1,0 +1,5 @@
+train/
+test/
+venv/
+__pycache__/
+*.pyc
