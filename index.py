@@ -1,6 +1,6 @@
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
-
+# Download the dataset from Kaggle and place it in the same directory as this script:https://www.kaggle.com/datasets/ananthu017/emotion-detection-fer?resource=download
 # 1. Define preprocessing
 transform = transforms.Compose([
     transforms.Grayscale(),
