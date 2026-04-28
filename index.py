@@ -10,12 +10,12 @@ transform = transforms.Compose([
 
 # 2. Load dataset
 train_data = datasets.ImageFolder(
-    root="train",
+    root="C:\\Users\\nadee\\Downloads\\Emotion-Recognition\\archive\\train",
     transform=transform
 )
 
 test_data = datasets.ImageFolder(
-    root="test",
+    root="C:\\Users\\nadee\\Downloads\\Emotion-Recognition\\archive\\test",
     transform=transform
 )
 

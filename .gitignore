@@ -3,3 +3,6 @@ test/
 venv/
 __pycache__/
 *.pyc
+aNormalized+histogram/
+archive/
+archiveNormalized/
