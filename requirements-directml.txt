@@ -1,0 +1,9 @@
+tensorflow-cpu==2.10.0
+tensorflow-directml-plugin==0.4.0.dev230202
+numpy==1.23.5
+opencv-python==4.8.1.78
+scikit-learn==1.7.2
+matplotlib==3.10.9
+tqdm==4.67.3
+notebook==7.5.6
+ipykernel==7.2.0

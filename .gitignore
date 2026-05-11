@@ -1,8 +1,12 @@
 train/
 test/
 venv/
+venv-directml/
 __pycache__/
 *.pyc
+*.h5
+*.keras
+*_metrics.json
 aNormalized+histogram/
 archive/
 archiveNormalized/
