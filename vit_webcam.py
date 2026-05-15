@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -11,7 +11,9 @@ from torchvision import transforms
 
 
 PROJECT_ROOT = Path(r"C:\Emotion-Recognition")
-DEFAULT_CHECKPOINT = PROJECT_ROOT / "vit_runs" / "vit_fer2013_6class_best.pth"
+REGULARIZED_CHECKPOINT = PROJECT_ROOT / "vit_runs" / "vit_fer2013_6class_regularized_best.pth"
+ORIGINAL_CHECKPOINT = PROJECT_ROOT / "vit_runs" / "vit_fer2013_6class_best.pth"
+DEFAULT_CHECKPOINT = REGULARIZED_CHECKPOINT if REGULARIZED_CHECKPOINT.exists() else ORIGINAL_CHECKPOINT
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,6 +22,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=540)
+    parser.add_argument("--face-margin", type=float, default=0.08)
+    parser.add_argument("--smoothing", type=float, default=0.70)
+    parser.add_argument(
+        "--preprocess",
+        choices=("gray-eq", "gray", "color"),
+        default="gray-eq",
+        help="gray-eq usually matches FER-style grayscale training images best.",
+    )
     parser.add_argument("--no-mirror", action="store_true")
     return parser.parse_args()
 
@@ -61,15 +71,29 @@ def load_model(checkpoint_path: Path, device: torch.device):
     return model, display_class_names, build_transform(img_size)
 
 
+def preprocess_face_for_model(face_bgr: np.ndarray, mode: str) -> Image.Image:
+    if mode == "color":
+        face_rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(face_rgb)
+
+    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+    if mode == "gray-eq":
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+
+    face_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+    return Image.fromarray(face_rgb)
+
+
 @torch.no_grad()
 def predict_face(
     model: torch.nn.Module,
     transform: transforms.Compose,
     face_bgr: np.ndarray,
     device: torch.device,
+    preprocess_mode: str,
 ) -> np.ndarray:
-    face_rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
-    image = Image.fromarray(face_rgb)
+    image = preprocess_face_for_model(face_bgr, preprocess_mode)
     tensor = transform(image).unsqueeze(0).to(device)
     logits = model(tensor)
     return torch.softmax(logits, dim=1).squeeze(0).detach().cpu().numpy()
@@ -79,6 +103,27 @@ def largest_face(faces: Sequence[Tuple[int, int, int, int]]) -> Tuple[int, int, 
     if len(faces) == 0:
         return None
     return max(faces, key=lambda item: item[2] * item[3])
+
+
+def square_face_crop(
+    frame: np.ndarray,
+    face_box: Tuple[int, int, int, int],
+    margin_ratio: float,
+) -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
+    x, y, w, h = face_box
+    side = int(max(w, h) * (1.0 + 2.0 * margin_ratio))
+    cx = x + w // 2
+    cy = y + h // 2
+
+    x1 = max(0, cx - side // 2)
+    y1 = max(0, cy - side // 2)
+    x2 = min(frame.shape[1], x1 + side)
+    y2 = min(frame.shape[0], y1 + side)
+
+    x1 = max(0, x2 - side)
+    y1 = max(0, y2 - side)
+
+    return frame[y1:y2, x1:x2], (x1, y1, x2, y2)
 
 
 def draw_percent_panel(
@@ -148,6 +193,10 @@ def main() -> None:
 
     print("Webcam started. Press q to quit.")
     print("Classes:", ", ".join(class_names))
+    print("Checkpoint:", args.checkpoint)
+    print("Preprocess:", args.preprocess)
+
+    smoothed_probabilities = None
 
     while True:
         ok, frame = camera.read()
@@ -167,15 +216,17 @@ def main() -> None:
 
         main_face = largest_face(faces)
         if main_face is not None:
-            x, y, w, h = main_face
-            margin = int(0.18 * max(w, h))
-            x1 = max(0, x - margin)
-            y1 = max(0, y - margin)
-            x2 = min(frame.shape[1], x + w + margin)
-            y2 = min(frame.shape[0], y + h + margin)
-            face = frame[y1:y2, x1:x2]
+            face, (x1, y1, x2, y2) = square_face_crop(frame, main_face, args.face_margin)
 
-            probabilities = predict_face(model, transform, face, device)
+            raw_probabilities = predict_face(model, transform, face, device, args.preprocess)
+            if smoothed_probabilities is None:
+                smoothed_probabilities = raw_probabilities
+            else:
+                alpha = float(np.clip(args.smoothing, 0.0, 0.95))
+                smoothed_probabilities = alpha * smoothed_probabilities + (1.0 - alpha) * raw_probabilities
+                smoothed_probabilities = smoothed_probabilities / smoothed_probabilities.sum()
+
+            probabilities = smoothed_probabilities
             pred_idx = int(np.argmax(probabilities))
             label = f"{class_names[pred_idx]} {probabilities[pred_idx] * 100:.1f}%"
 
@@ -189,6 +240,8 @@ def main() -> None:
                 (0, 210, 80),
                 2,
             )
+        else:
+            smoothed_probabilities = None
 
         output = draw_percent_panel(frame, class_names, probabilities)
         cv2.imshow("ViT Emotion Recognition", output)
